@@ -125,4 +125,5 @@ runs:
         AI_MAX_FILES: ${{ inputs.max-files }}
         AI_MAX_OPEN_PRS: ${{ inputs.max-open-prs }}
         AI_PROTECTED: ${{ inputs.protected }}
+        AI_INSTALL_COMMAND: ${{ inputs.install-command }}
         AI_TEST_COMMAND: ${{ inputs.test-command }}

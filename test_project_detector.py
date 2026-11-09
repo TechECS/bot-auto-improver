@@ -1,10 +1,31 @@
 import tempfile
 import unittest
 from pathlib import Path
-from project_detector import detect_test_command
+from project_detector import detect_install_command, detect_test_command
 
 
 class TestProjectDetector(unittest.TestCase):
+    def test_detect_install_python_requirements(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "requirements.txt").write_text("requests==2.31.0", encoding="utf-8")
+            cmd = detect_install_command(root)
+            self.assertEqual(cmd, "pip install -r requirements.txt")
+
+    def test_detect_install_npm_lock(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            cmd = detect_install_command(root)
+            self.assertEqual(cmd, "npm ci")
+
+    def test_detect_install_cargo(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Cargo.toml").write_text("[package]\nname = 'foo'", encoding="utf-8")
+            cmd = detect_install_command(root)
+            self.assertEqual(cmd, "cargo build")
+
     def test_detect_python_unittest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
