@@ -25,6 +25,10 @@ from pydantic import BaseModel
 
 ROOT = Path.cwd()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+MODELS = [m.strip() for m in MODEL.split(",") if m.strip()]  # cadena de fallback
+USED_MODEL = MODELS[0]
+AUTO_FALLBACK = os.environ.get("AI_AUTO_FALLBACK", "true").lower() == "true"
+TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "90000"))
 API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta")  # los alias *-latest solo existen en v1beta
 LANG = os.environ.get("AI_LANGUAGE", "es")
 MAX_CHARS = int(os.environ.get("AI_MAX_CONTEXT_CHARS", "250000"))
@@ -247,13 +251,23 @@ def list_models(client) -> list[str]:
     return sorted(names)
 
 
-def ask_gemini(client, system: str, prompt: str) -> Proposal:
+class GeminiBusy(RuntimeError):
+    """Ningún modelo pudo responder (saturación, límite de uso o modelos no disponibles)."""
+
+
+SKIP_ERRORS = ("404", "NOT_FOUND", "403", "PERMISSION_DENIED")
+TRANSIENT_ERRORS = ("429", "500", "502", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE")
+NOT_TEXT_MODELS = ("image", "tts", "live", "audio", "embedding", "robotics", "computer", "customtools", "exp")
+
+
+def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> str | None:
+    """Devuelve el texto de la respuesta o None si hay que pasar al siguiente modelo."""
     from google.genai import types
 
-    for i in range(1, 4):
+    for attempt in (1, 2):
         try:
             resp = client.models.generate_content(
-                model=MODEL,
+                model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system,
@@ -262,21 +276,54 @@ def ask_gemini(client, system: str, prompt: str) -> Proposal:
                     temperature=0.2,
                 ),
             )
-            return Proposal.model_validate_json(resp.text)
+            return resp.text
         except Exception as e:  # noqa: BLE001
-            if "404" in str(e) or "NOT_FOUND" in str(e):
-                available = list_models(client)
-                log(f"::error::El modelo '{MODEL}' no está disponible con la API {API_VERSION}. "
-                    "Pon uno válido en la entrada `model`. Modelos con generateContent para tu clave:\n- "
-                    + "\n- ".join(available[:40] or ["(no se pudo obtener la lista)"]))
+            msg = str(e)
+            if any(t in msg for t in SKIP_ERRORS):
+                log(f"{model}: no disponible o sin permiso ({e.__class__.__name__}); pruebo el siguiente.")
+                return None
+            if not any(t in msg for t in TRANSIENT_ERRORS):
+                if lenient:
+                    log(f"{model}: {e.__class__.__name__}; pruebo el siguiente.")
+                    return None
                 raise
-            transient = any(t in str(e) for t in ("429", "500", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE"))
-            if i == 3 or not transient:
-                raise
-            wait = 30 * i
-            log(f"Gemini no disponible o límite alcanzado ({e.__class__.__name__}); reintento en {wait}s")
-            time.sleep(wait)
-    raise RuntimeError("inalcanzable")
+            kind = "límite de uso (429)" if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) else "servidor saturado (5xx)"
+            if attempt == 1:
+                log(f"{model}: {kind}; reintento en 10s")
+                time.sleep(10)
+            else:
+                log(f"{model}: {kind} persistente; pruebo el siguiente.")
+    return None
+
+
+def ask_gemini(client, system: str, prompt: str) -> Proposal:
+    """Prueba los modelos configurados y, si todos fallan, otros Flash que la clave tenga disponibles."""
+    global USED_MODEL
+
+    tried: list[str] = []
+    for model in MODELS:
+        tried.append(model)
+        text = try_model(client, model, system, prompt, lenient=False)
+        if text is not None:
+            USED_MODEL = model
+            log(f"Respuesta obtenida con {model}")
+            return Proposal.model_validate_json(text)
+
+    available = list_models(client)
+    if AUTO_FALLBACK:
+        extra = sorted((m for m in available if "flash" in m and m not in tried
+                        and not any(x in m for x in NOT_TEXT_MODELS)), reverse=True)[:3]
+        if extra:
+            log(f"Los modelos configurados fallaron; pruebo otros disponibles: {', '.join(extra)}")
+        for model in extra:
+            text = try_model(client, model, system, prompt, lenient=True)
+            if text is not None:
+                USED_MODEL = model
+                log(f"Respuesta obtenida con {model}")
+                return Proposal.model_validate_json(text)
+
+    raise GeminiBusy("Ningún modelo respondió. Disponibles para tu clave: "
+                     + (", ".join(available[:30]) or "(no se pudo obtener la lista)"))
 
 
 # -------------------------------- validación ---------------------------------
@@ -363,11 +410,11 @@ def pr_body(p: Proposal) -> str:
             f"## {t['why']}\n{p.pr_why.strip()}\n\n"
             f"## {t['changes']}\n{changes}\n\n"
             f"## {t['test']}\n{p.pr_how_to_test.strip()}\n\n"
-            f"---\n🤖 {t['footer'].format(model=MODEL)}\n")
+            f"---\n🤖 {t['footer'].format(model=USED_MODEL)}\n")
 
 
 def describe_dry_run(p: Proposal) -> str:
-    lines = [f"### Propuesta (dry run)\n**PR:** `{header(p.commits[0])}`\n", pr_body(p)]
+    lines = [f"### Propuesta (dry run)\n**Modelo:** `{USED_MODEL}`\n**PR:** `{header(p.commits[0])}`\n", pr_body(p)]
     for c in p.commits:
         lines.append(f"\n#### `{header(c)}`")
         for e in c.edits:
@@ -397,18 +444,23 @@ def main() -> int:
         return 0
 
     focus_key = FOCUS if FOCUS in FOCOS else list(FOCOS)[dt.date.today().isocalendar()[1] % len(FOCOS)]
-    log(f"Modelo: {MODEL} · foco: {focus_key} · dry_run: {DRY_RUN}")
+    log(f"Modelos (en orden): {', '.join(MODELS)} · foco: {focus_key} · dry_run: {DRY_RUN}")
 
     files = out(["git", "ls-files"]).splitlines()
     tree = "\n".join(files[:400])
     context = build_context(files)
     rules = read_text(".auto-improver.md") or ""
-    client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version=API_VERSION))
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version=API_VERSION, timeout=TIMEOUT_MS))
 
     proposal, errors, per_commit = None, [], []
     for attempt in (1, 2):
-        proposal = ask_gemini(client, system_prompt(FOCOS[focus_key]),
-                              user_prompt(tree, context, rules, recent, errors))
+        try:
+            proposal = ask_gemini(client, system_prompt(FOCOS[focus_key]),
+                                  user_prompt(tree, context, rules, recent, errors))
+        except GeminiBusy as e:
+            log(f"::warning::Gemini no pudo responder ahora: {e}")
+            summary(f"Gemini no pudo responder ahora (saturación o límite). No se creó nada.\n\n{e}")
+            return 0
         if proposal.nothing_to_do:
             log(f"Gemini no propone cambios: {proposal.reason}")
             summary(f"Sin cambios: {proposal.reason}")

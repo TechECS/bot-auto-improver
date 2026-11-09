@@ -52,7 +52,8 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 |---|---|---|
 | `gemini-api-key` | (obligatoria) | API key de Gemini |
 | `github-token` | (obligatoria) | Token de la GitHub App (o PAT) |
-| `model` | `gemini-flash-latest` | Modelo de Gemini. Si falla con 404, el log lista los modelos válidos para tu clave |
+| `model` | `gemini-flash-latest,gemini-2.5-flash,gemini-2.5-flash-lite` | Modelo o lista en orden de preferencia: si uno da 404, límite (429) o servidor saturado (5xx), prueba el siguiente |
+| `auto-fallback` | `true` | Si fallan todos los modelos de la lista, prueba hasta 3 modelos Flash más que tu clave tenga disponibles |
 | `api-version` | `v1beta` | Versión de la API de Gemini (los alias `*-latest` solo existen en `v1beta`) |
 | `language` | `es` | Idioma de commits y PR (`es`, `en`) |
 | `focus` | `auto` | `auto`, `bugs`, `tests`, `seguridad`, `docs`, `accesibilidad`, `funcionalidad` |
@@ -74,6 +75,10 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 - Los tests del proyecto se ejecutan antes de abrir la PR, **sin** el token ni la API key en el entorno, y el token no queda guardado en `.git/config`.
 - Con `GITHUB_TOKEN` en vez de una App, las PRs **no disparan el CI** (regla anti-bucles de GitHub).
 - El código del repo se envía a la API de Gemini. En la **capa gratuita de Google AI Studio, los datos pueden usarse para mejorar sus productos**: no lo uses con código privado o sensible sin revisar sus condiciones actuales.
+
+## Si Gemini está saturado
+
+Los errores `503 UNAVAILABLE` («high demand») son del lado de Google y suelen ser temporales, sobre todo con los modelos más nuevos. El bot reintenta una vez (10 s), pasa al siguiente modelo de la lista y, si todos fallan, prueba otros Flash disponibles. Si ninguno responde, termina con un aviso (*warning*) y **sin error**, para no poner en rojo el workflow por un fallo ajeno; la siguiente ejecución lo intentará de nuevo.
 
 ## Límites conocidos
 

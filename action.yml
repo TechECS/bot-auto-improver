@@ -13,8 +13,11 @@ inputs:
     description: Token con permisos de contenido y PRs (se recomienda el token de una GitHub App).
     required: true
   model:
-    description: Modelo de Gemini. Cámbialo si Google renombra el modelo gratuito.
-    default: gemini-flash-latest
+    description: Modelo de Gemini o lista separada por comas en orden de preferencia; si uno da 404, 429 o 5xx, pasa al siguiente.
+    default: gemini-flash-latest,gemini-2.5-flash,gemini-2.5-flash-lite
+  auto-fallback:
+    description: "Si fallan todos los modelos de `model`, prueba hasta 3 modelos Flash más que tu clave tenga disponibles."
+    default: "true"
   api-version:
     description: Versión de la API de Gemini. Los alias *-latest solo existen en v1beta.
     default: v1beta
@@ -99,6 +102,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         GEMINI_MODEL: ${{ inputs.model }}
         GEMINI_API_VERSION: ${{ inputs.api-version }}
+        AI_AUTO_FALLBACK: ${{ inputs.auto-fallback }}
         AI_LANGUAGE: ${{ inputs.language }}
         AI_FOCUS: ${{ inputs.focus }}
         AI_DRY_RUN: ${{ inputs.dry-run }}
