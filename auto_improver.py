@@ -531,14 +531,29 @@ def validate(p: Proposal, feature: bool = False) -> tuple[list[str], list[dict[s
 
 # ----------------------------------- PR --------------------------------------
 
-def pr_body(p: Proposal, others: list[Idea] | None = None) -> str:
+def calculate_pr_risk(p: Proposal, per_commit: list[dict[str, str]]) -> tuple[str, str]:
+    total_chars = sum(len(content) for writes in per_commit for content in writes.values())
+    num_files = len(set(path for writes in per_commit for path in writes))
+    score = num_files * 2 + (total_chars // 500)
+    if score < 5:
+        return "Bajo 🟢", f"Cambio pequeño y localizado ({num_files} archivos, ~{total_chars} caracteres modificados)."
+    elif score < 15:
+        return "Medio 🟡", f"Cambio moderado ({num_files} archivos, ~{total_chars} caracteres modificados)."
+    else:
+        return "Alto 🔴", f"Cambio extenso o complejo ({num_files} archivos, ~{total_chars} caracteres modificados)."
+
+
+def pr_body(p: Proposal, others: list[Idea] | None = None, per_commit: list[dict[str, str]] | None = None) -> str:
     t = TXT.get(LANG, TXT["en"])
     changes = "\n".join(f"- `{header(c)}`" for c in p.commits)
     inspired = f"## {t['inspired']}\n{p.inspiration.strip()}\n\n" if p.inspiration.strip() else ""
+    risk_level, risk_desc = calculate_pr_risk(p, per_commit or [])
+    risk_section = f"## Riesgo\n**Nivel**: {risk_level}\n{risk_desc}\n\n"
     more = ""
     if others:
         more = f"## {t['ideas']}\n" + "\n".join(f"- **{i.title}**: {i.summary}" for i in others) + "\n\n"
-    return (f"## {t['summary']}\n{p.pr_summary.strip()}\n\n"
+    return (f"{risk_section}"
+            f"## {t['summary']}\n{p.pr_summary.strip()}\n\n"
             f"## {t['why']}\n{p.pr_why.strip()}\n\n"
             f"{inspired}"
             f"## {t['changes']}\n{changes}\n\n"
@@ -554,8 +569,8 @@ def describe_ideas(project_summary: str, ideas: list[Idea]) -> str:
     return f"### Análisis del proyecto\n{project_summary}\n\n### Ideas de funcionalidades\n{rows}\n"
 
 
-def describe_dry_run(p: Proposal, others: list[Idea] | None = None) -> str:
-    lines = [f"### Propuesta (dry run)\n**Modelo:** `{USED_MODEL}`\n**PR:** `{header(p.commits[0])}`\n", pr_body(p, others)]
+def describe_dry_run(p: Proposal, others: list[Idea] | None = None, per_commit: list[dict[str, str]] | None = None) -> str:
+    lines = [f"### Propuesta (dry run)\n**Modelo:** `{USED_MODEL}`\n**PR:** `{header(p.commits[0])}`\n", pr_body(p, others, per_commit)]
     for c in p.commits:
         lines.append(f"\n#### `{header(c)}`")
         for e in c.edits:
@@ -663,7 +678,7 @@ def main() -> int:
     others = [i for i in ideas if i is not chosen]
 
     if DRY_RUN:
-        text = describe_dry_run(proposal, others)
+        text = describe_dry_run(proposal, others, per_commit)
         log(text)
         summary(text)
         return 0
@@ -710,7 +725,7 @@ def main() -> int:
             return 1
         raise
     pr = sh(["gh", "pr", "create", "--base", base, "--head", branch,
-             "--title", header(proposal.commits[0]), "--body", pr_body(proposal, others),
+             "--title", header(proposal.commits[0]), "--body", pr_body(proposal, others, per_commit),
              "--label", LABEL])
     log(pr.stdout.strip())
     summary(f"PR creada: {pr.stdout.strip()}")
