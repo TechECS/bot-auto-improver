@@ -35,11 +35,19 @@ API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta")  # los alias *-late
 LANG = os.environ.get("AI_LANGUAGE", "es")
 MAX_CHARS = int(os.environ.get("AI_MAX_CONTEXT_CHARS", "250000"))
 MAX_FILE_CHARS = int(os.environ.get("AI_MAX_FILE_CHARS", "80000"))
-MAX_FILES = int(os.environ.get("AI_MAX_FILES", "6"))
+MAX_FILES = int(os.environ.get("AI_MAX_FILES", "8"))
 MAX_OPEN_PRS = int(os.environ.get("AI_MAX_OPEN_PRS", "1"))
 MAX_COMMITS = 3
 TEST_CMD = os.environ.get("AI_TEST_COMMAND", "").strip()
-FOCUS = os.environ.get("AI_FOCUS", "auto")
+FOCUS = os.environ.get("AI_FOCUS", "auto")  # auto = funcionalidad; "rotar" = rota cada semana
+ALLOW_NOTHING = os.environ.get("AI_ALLOW_NOTHING", "false").lower() == "true"  # permitir «nada que hacer»
+IDEATE = os.environ.get("AI_IDEATE", "true").lower() == "true"  # fase previa de ideas (modo funcionalidad)
+NUM_IDEAS = int(os.environ.get("AI_NUM_IDEAS", "5"))
+MAX_IDEA_TRIES = int(os.environ.get("AI_MAX_IDEA_TRIES", "2"))  # ideas que se intentan implementar
+EXTRA_CONTEXT = os.environ.get("AI_CONTEXT", "").strip()  # contexto libre del propietario
+MAX_OUTPUT_TOKENS = int(os.environ.get("AI_MAX_OUTPUT_TOKENS", "32768"))
+TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.5"))
+FEATURE_FOCUS = "funcionalidad"
 DRY_RUN = os.environ.get("AI_DRY_RUN", "false").lower() == "true"
 LABEL = "auto-improver"
 
@@ -52,8 +60,9 @@ FOCOS = {
     "seguridad": "escape de datos, validación de entradas, manejo de secretos y límites de peticiones",
     "docs": "documentación desactualizada o que no coincide con el código",
     "accesibilidad": "accesibilidad y rendimiento de la interfaz",
-    "funcionalidad": "una mejora pequeña y útil alineada con el propósito del proyecto "
-                     "(mira las ideas de colaboración del README si existen)",
+    "funcionalidad": "una funcionalidad NUEVA y completa que haga el proyecto más potente y útil "
+                     "(más opciones, automatización, informes, integraciones, herramientas de uso interno, "
+                     "mejor experiencia), inspirada en lo que ofrecen proyectos open source populares del mismo ámbito",
 }
 
 # Archivos que el bot nunca puede modificar (solo leer).
@@ -68,10 +77,10 @@ TEXT_EXT = {".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".css", ".json
 SKIP_CONTEXT = ["data/*", "*.min.js", "*.min.css", "*lock.json", "*.lock", "sitemap.xml"]
 
 TXT = {
-    "es": {"summary": "Resumen", "why": "Por qué", "changes": "Cambios", "test": "Cómo probar",
+    "es": {"inspired": "Inspiración", "ideas": "Otras ideas para próximas PR", "summary": "Resumen", "why": "Por qué", "changes": "Cambios", "test": "Cómo probar",
            "footer": "PR generada automáticamente por auto-improver con Gemini (`{model}`). "
                      "Revísala antes de fusionar."},
-    "en": {"summary": "Summary", "why": "Why", "changes": "Changes", "test": "How to test",
+    "en": {"inspired": "Inspiration", "ideas": "Other ideas for future PRs", "summary": "Summary", "why": "Why", "changes": "Changes", "test": "How to test",
            "footer": "PR generated automatically by auto-improver using Gemini (`{model}`). "
                      "Review it before merging."},
 }
@@ -99,9 +108,23 @@ class CommitPlan(BaseModel):
     new_files: list[NewFile]
 
 
+class Idea(BaseModel):
+    title: str
+    summary: str
+    inspiration: str
+    value: str
+    effort: str
+
+
+class Ideation(BaseModel):
+    project_summary: str
+    ideas: list[Idea]
+
+
 class Proposal(BaseModel):
     nothing_to_do: bool
     reason: str
+    inspiration: str
     branch_slug: str
     pr_summary: str
     pr_why: str
@@ -209,32 +232,79 @@ def recent_prs() -> list[dict]:
 
 # ------------------------------------ prompt ---------------------------------
 
-def system_prompt(focus_desc: str) -> str:
+def system_prompt(focus_desc: str, feature: bool = False) -> str:
     lang = {"es": "español", "en": "inglés"}.get(LANG, LANG)
+    if feature:
+        task = (f"Tu tarea: implementar UNA funcionalidad nueva, completa y útil (no un retoque cosmético), "
+                f"centrada en: {focus_desc}.")
+    else:
+        task = f"Tu tarea: proponer UNA mejora pequeña, segura y verificable, centrada en: {focus_desc}."
+    if feature and not ALLOW_NOTHING:
+        r10 = ("10. nothing_to_do debe ser false: siempre se puede añadir valor. Si la idea es grande, entrega una primera "
+               "versión funcional y acotada (MVP) que quepa en los límites. Solo si es materialmente imposible, "
+               "devuelve nothing_to_do=true con la razón.")
+        r4 = (f"4. Máximo {MAX_FILES} archivos distintos en total. Evita refactors masivos y cambios de estilo gratuitos, "
+              "pero SÍ puedes crear módulos o archivos nuevos si la funcionalidad lo necesita.")
+    else:
+        r10 = ("10. Si no hay nada que merezca de verdad la pena, devuelve nothing_to_do=true con la razón. "
+               "Es mejor no hacer nada que generar ruido.")
+        r4 = f"4. Máximo {MAX_FILES} archivos distintos en total. Cambios mínimos: nada de refactors masivos ni cambios de estilo gratuitos."
+    extra = ""
+    if feature:
+        extra = ("\n14. El primer commit debe ser de tipo feat. La funcionalidad debe ser compatible hacia atrás: "
+                 "opt-in o con valores por defecto que mantengan el comportamiento actual.")
     return f"""Eres un ingeniero de software senior que mantiene este repositorio con mucho cuidado.
-Tu tarea: proponer UNA mejora pequeña, segura y verificable, centrada en: {focus_desc}.
+{task}
 
 REGLAS ESTRICTAS
 1. Conventional Commits (https://www.conventionalcommits.org/es/). type debe ser uno de: {', '.join(TYPES)}. scope es opcional, en minúsculas y kebab-case (módulo o área, p. ej. geocodificacion). Sin '!' ni BREAKING CHANGE.
 2. description: en {lang}, modo imperativo, empieza en minúscula, sin punto final. La cabecera completa 'type(scope): description' mide como máximo {HEADER_MAX} caracteres.
 3. Un commit = un cambio lógico y autocontenido. Máximo {MAX_COMMITS} commits; el principal va primero. body es opcional (explica el porqué).
-4. Máximo {MAX_FILES} archivos distintos en total. Cambios mínimos: nada de refactors masivos ni cambios de estilo gratuitos.
+{r4}
 5. edits: 'find' debe ser un fragmento EXACTO (espacios, tabuladores y saltos de línea idénticos) y ÚNICO en el archivo actual; incluye líneas de contexto suficientes. 'replace' es el texto nuevo. Edita solo partes visibles; nunca archivos [solo lectura] ni zonas [TRUNCADO] omitidas.
-6. new_files solo para archivos que no existan (por ejemplo tests nuevos).
-7. Respeta al pie de la letra el README y las reglas de .auto-improver.md. No añadas dependencias, no toques claves ni secretos, no edites archivos generados.
-8. Si cambias comportamiento, añade o ajusta tests. Los tests existentes deben seguir pasando.
+6. new_files solo para archivos que no existan (por ejemplo módulos o tests nuevos).
+7. Respeta al pie de la letra el README, las reglas de .auto-improver.md y el contexto del propietario. No añadas dependencias externas nuevas (usa la librería estándar o lo que el proyecto ya usa), no toques claves ni secretos, no edites archivos generados.
+8. Si cambias comportamiento, añade o ajusta tests cuando el proyecto ya tenga tests o puedas escribirlos con la librería estándar. Los tests existentes deben seguir pasando.
 9. No repitas ni solapes las PRs previas de la lista.
-10. Si no hay nada que merezca de verdad la pena, devuelve nothing_to_do=true con la razón. Es mejor no hacer nada que generar ruido.
+{r10}
 11. pr_summary, pr_why y pr_how_to_test en {lang}, claros y concretos. Campos sin uso: cadena vacía o lista vacía.
-12. branch_slug: 2 a 5 palabras en kebab-case, solo ASCII en minúsculas y números, máximo 40 caracteres."""
+12. branch_slug: 2 a 5 palabras en kebab-case, solo ASCII en minúsculas y números, máximo 40 caracteres.
+13. inspiration: proyecto(s) open source REAL(es) o patrón conocido del que sale la idea y qué se toma exactamente. Si es original, escribe 'original'. No inventes proyectos ni funciones.{extra}"""
 
 
-def user_prompt(tree: str, context: str, rules: str, recent: list[dict], errors: list[str]) -> str:
+def ideation_system() -> str:
+    lang = {"es": "español", "en": "inglés"}.get(LANG, LANG)
+    return f"""Eres un product engineer senior con mucha experiencia en proyectos open source.
+Tu tarea: entender a fondo qué hace este repositorio y proponer {NUM_IDEAS} funcionalidades NUEVAS que lo hagan claramente más potente.
+
+CÓMO PENSAR
+1. project_summary: qué hace el proyecto, para quién (incluido el uso interno de equipos técnicos si procede), su stack, su estructura y las carencias que ves.
+2. Recuerda proyectos open source populares y maduros de la misma categoría o adyacentes y qué ofrecen (funciones, opciones de configuración, estructura, flujos de trabajo, informes, integraciones) que este proyecto no tiene.
+3. Propón ideas concretas y distintas entre sí: funciones nuevas, automatizaciones, opciones de configuración, informes o resúmenes, integraciones, mejor observabilidad, herramientas para uso interno.
+
+REGLAS
+- Cada idea debe poder implementarse como un MVP funcional en como máximo {MAX_FILES} archivos, sin dependencias externas nuevas y sin romper lo existente.
+- Nada de refactors, estilo ni documentación pura: solo funcionalidad real.
+- inspiration: nombra proyectos open source REALES y qué se toma de ellos. No inventes proyectos ni funciones: si no estás seguro, escribe 'patrón común en herramientas del sector'.
+- No repitas ni solapes las PRs previas ni lo que el proyecto ya hace.
+- Ordena de mayor a menor relación valor/esfuerzo: la primera es la recomendada. effort: bajo, medio o alto.
+- Respeta las reglas del proyecto (.auto-improver.md) y el contexto del propietario.
+- Escribe en {lang}."""
+
+
+def user_prompt(tree: str, context: str, rules: str, recent: list[dict], errors: list[str],
+                extra: str = "", idea: Idea | None = None) -> str:
     prev = "\n".join(f"- [{p['state']}] {p['title']}" for p in recent) or "(ninguna)"
     msg = (f"## Reglas del proyecto (.auto-improver.md)\n{rules or '(no hay)'}\n\n"
+           f"## Contexto del propietario\n{extra or '(no hay)'}\n\n"
            f"## PRs previas del bot (no repetir)\n{prev}\n\n"
            f"## Árbol del repositorio\n{tree}\n\n"
            f"## Contenido de los archivos\n{context}\n")
+    if idea is not None:
+        msg += (f"\n## FUNCIONALIDAD A IMPLEMENTAR (elegida en la fase de ideas)\n"
+                f"**{idea.title}**: {idea.summary}\nInspiración: {idea.inspiration}\n"
+                f"Valor: {idea.value}\nEsfuerzo estimado: {idea.effort}\n"
+                "Impleméntala como MVP funcional dentro de los límites.\n")
     if errors:
         msg += ("\n## ERRORES DE TU PROPUESTA ANTERIOR (corrígelos en la nueva propuesta)\n"
                 + "\n".join(f"- {e}" for e in errors))
@@ -301,7 +371,7 @@ def flash_candidates(available: list[str], exclude: list[str]) -> list[str]:
     return [r[3] for r in sorted(rows)]
 
 
-def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> str | None:
+def try_model(client, model: str, system: str, prompt: str, lenient: bool, schema, temperature: float) -> str | None:
     """Devuelve el texto de la respuesta o None si hay que pasar al siguiente modelo."""
     from google.genai import types
 
@@ -313,8 +383,9 @@ def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> st
                 config=types.GenerateContentConfig(
                     system_instruction=system,
                     response_mime_type="application/json",
-                    response_schema=Proposal,
-                    temperature=0.2,
+                    response_schema=schema,
+                    temperature=temperature,
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
                 ),
             )
             return resp.text
@@ -337,18 +408,32 @@ def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> st
     return None
 
 
-def ask_gemini(client, system: str, prompt: str) -> Proposal:
-    """Prueba los modelos configurados y, si todos fallan, otros Flash que la clave tenga disponibles."""
+def _parsed(client, model: str, system: str, prompt: str, lenient: bool, schema, temperature: float):
+    """Llama a un modelo y valida la respuesta contra el esquema; None si hay que pasar al siguiente."""
     global USED_MODEL
 
+    text = try_model(client, model, system, prompt, lenient, schema, temperature)
+    if text is None:
+        return None
+    try:
+        obj = schema.model_validate_json(text)
+    except ValueError as e:  # JSON truncado o fuera de esquema (ValidationError hereda de ValueError)
+        log(f"{model}: respuesta no válida ({str(e)[:150]!r}); pruebo el siguiente.")
+        return None
+    USED_MODEL = model
+    log(f"Respuesta obtenida con {model}")
+    return obj
+
+
+def ask_gemini(client, system: str, prompt: str, schema=Proposal, temperature: float | None = None):
+    """Prueba los modelos configurados y, si todos fallan, otros Flash que la clave tenga disponibles."""
+    temp = TEMPERATURE if temperature is None else temperature
     tried: list[str] = []
     for model in MODELS:
         tried.append(model)
-        text = try_model(client, model, system, prompt, lenient=False)
-        if text is not None:
-            USED_MODEL = model
-            log(f"Respuesta obtenida con {model}")
-            return Proposal.model_validate_json(text)
+        obj = _parsed(client, model, system, prompt, False, schema, temp)
+        if obj is not None:
+            return obj
 
     available = list_models(client)
     if AUTO_FALLBACK:
@@ -356,11 +441,9 @@ def ask_gemini(client, system: str, prompt: str) -> Proposal:
         if extra:
             log(f"Los modelos configurados fallaron; pruebo otros disponibles: {', '.join(extra)}")
         for model in extra:
-            text = try_model(client, model, system, prompt, lenient=True)
-            if text is not None:
-                USED_MODEL = model
-                log(f"Respuesta obtenida con {model}")
-                return Proposal.model_validate_json(text)
+            obj = _parsed(client, model, system, prompt, True, schema, temp)
+            if obj is not None:
+                return obj
 
     raise GeminiBusy("Ningún modelo respondió. Disponibles para tu clave: "
                      + (", ".join(available[:30]) or "(no se pudo obtener la lista)"))
@@ -372,7 +455,7 @@ HEADER_RE = re.compile(r"^(" + "|".join(TYPES) + r")(\([a-z0-9._-]+\))?: \S.*$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-def validate(p: Proposal) -> tuple[list[str], list[dict[str, str]]]:
+def validate(p: Proposal, feature: bool = False) -> tuple[list[str], list[dict[str, str]]]:
     """Devuelve (errores, cambios por commit). Simula la aplicación sin tocar el disco."""
     errors: list[str] = []
     if not SLUG_RE.match(p.branch_slug) or len(p.branch_slug) > 40:
@@ -381,6 +464,9 @@ def validate(p: Proposal) -> tuple[list[str], list[dict[str, str]]]:
         errors.append(f"debe haber entre 1 y {MAX_COMMITS} commits")
     if not p.pr_summary.strip() or not p.pr_why.strip() or not p.pr_how_to_test.strip():
         errors.append("pr_summary, pr_why y pr_how_to_test no pueden estar vacíos")
+
+    if feature and not any(c.type == "feat" for c in p.commits):
+        errors.append("en modo funcionalidad al menos un commit debe ser de tipo feat")
 
     state: dict[str, str] = {}
     per_commit: list[dict[str, str]] = []
@@ -443,18 +529,31 @@ def validate(p: Proposal) -> tuple[list[str], list[dict[str, str]]]:
 
 # ----------------------------------- PR --------------------------------------
 
-def pr_body(p: Proposal) -> str:
+def pr_body(p: Proposal, others: list[Idea] | None = None) -> str:
     t = TXT.get(LANG, TXT["en"])
     changes = "\n".join(f"- `{header(c)}`" for c in p.commits)
+    inspired = f"## {t['inspired']}\n{p.inspiration.strip()}\n\n" if p.inspiration.strip() else ""
+    more = ""
+    if others:
+        more = f"## {t['ideas']}\n" + "\n".join(f"- **{i.title}**: {i.summary}" for i in others) + "\n\n"
     return (f"## {t['summary']}\n{p.pr_summary.strip()}\n\n"
             f"## {t['why']}\n{p.pr_why.strip()}\n\n"
+            f"{inspired}"
             f"## {t['changes']}\n{changes}\n\n"
             f"## {t['test']}\n{p.pr_how_to_test.strip()}\n\n"
+            f"{more}"
             f"---\n🤖 {t['footer'].format(model=USED_MODEL)}\n")
 
 
-def describe_dry_run(p: Proposal) -> str:
-    lines = [f"### Propuesta (dry run)\n**Modelo:** `{USED_MODEL}`\n**PR:** `{header(p.commits[0])}`\n", pr_body(p)]
+def describe_ideas(project_summary: str, ideas: list[Idea]) -> str:
+    rows = "\n".join(f"{n}. **{i.title}** (esfuerzo: {i.effort}) — {i.summary}\n"
+                     f"   - Inspiración: {i.inspiration}\n   - Valor: {i.value}"
+                     for n, i in enumerate(ideas, 1))
+    return f"### Análisis del proyecto\n{project_summary}\n\n### Ideas de funcionalidades\n{rows}\n"
+
+
+def describe_dry_run(p: Proposal, others: list[Idea] | None = None) -> str:
+    lines = [f"### Propuesta (dry run)\n**Modelo:** `{USED_MODEL}`\n**PR:** `{header(p.commits[0])}`\n", pr_body(p, others)]
     for c in p.commits:
         lines.append(f"\n#### `{header(c)}`")
         for e in c.edits:
@@ -462,6 +561,34 @@ def describe_dry_run(p: Proposal) -> str:
         for nf in c.new_files:
             lines.append(f"Nuevo archivo `{nf.path}` ({len(nf.content)} caracteres)")
     return "\n".join(lines)
+
+
+def resolve_focus() -> str:
+    if FOCUS in FOCOS:
+        return FOCUS
+    if FOCUS == "rotar":  # comportamiento antiguo: un foco distinto cada semana
+        return list(FOCOS)[dt.date.today().isocalendar()[1] % len(FOCOS)]
+    return FEATURE_FOCUS  # auto: siempre funcionalidades nuevas
+
+
+def propose(client, sysmsg: str, tree: str, context: str, rules: str, recent: list[dict],
+            idea: Idea | None, feature: bool) -> tuple[Proposal | None, list[str], list[dict[str, str]], str]:
+    """Pide una propuesta (2 intentos, corrigiendo errores). Devuelve (propuesta, errores, cambios, razón_si_nada)."""
+    errors: list[str] = []
+    proposal, per_commit = None, []
+    for attempt in (1, 2):
+        proposal = ask_gemini(client, sysmsg, user_prompt(tree, context, rules, recent, errors, EXTRA_CONTEXT, idea))
+        if proposal.nothing_to_do:
+            if feature and not ALLOW_NOTHING and attempt == 1:
+                log("Gemini devolvió nothing_to_do; insisto: en este modo debe entregar un MVP.")
+                errors = ["nothing_to_do=true no está permitido: entrega una primera versión (MVP) de la funcionalidad."]
+                continue
+            return None, [], [], proposal.reason
+        errors, per_commit = validate(proposal, feature)
+        if not errors:
+            return proposal, [], per_commit, ""
+        log(f"Intento {attempt}: la propuesta tiene {len(errors)} problema(s):\n- " + "\n- ".join(errors))
+    return proposal, errors, per_commit, ""
 
 
 def main() -> int:
@@ -487,38 +614,54 @@ def main() -> int:
         log(f"Ya hay {len(open_prs)} PR(s) del bot abierta(s); no se crea otra.")
         return 0
 
-    focus_key = FOCUS if FOCUS in FOCOS else list(FOCOS)[dt.date.today().isocalendar()[1] % len(FOCOS)]
-    log(f"Modelos (en orden): {', '.join(MODELS)} · foco: {focus_key} · dry_run: {DRY_RUN}")
+    focus_key = resolve_focus()
+    feature = focus_key == FEATURE_FOCUS
+    log(f"Modelos (en orden): {', '.join(MODELS)} · foco: {focus_key} · ideas: {feature and IDEATE} · dry_run: {DRY_RUN}")
 
     files = out(["git", "ls-files"]).splitlines()
     tree = "\n".join(files[:400])
     context = build_context(files)
     rules = read_text(".auto-improver.md") or ""
+    sysmsg = system_prompt(FOCOS[focus_key], feature)
 
-    proposal, errors, per_commit = None, [], []
-    for attempt in (1, 2):
-        try:
-            proposal = ask_gemini(client, system_prompt(FOCOS[focus_key]),
-                                  user_prompt(tree, context, rules, recent, errors))
-        except GeminiBusy as e:
-            log(f"::warning::Gemini no pudo responder ahora: {e}")
-            summary(f"Gemini no pudo responder ahora (saturación o límite). No se creó nada.\n\n{e}")
-            return 0
-        if proposal.nothing_to_do:
-            log(f"Gemini no propone cambios: {proposal.reason}")
-            summary(f"Sin cambios: {proposal.reason}")
-            return 0
-        errors, per_commit = validate(proposal)
-        if not errors:
-            break
-        log(f"Intento {attempt}: la propuesta tiene {len(errors)} problema(s):\n- " + "\n- ".join(errors))
+    ideas: list[Idea] = []
+    try:
+        if feature and IDEATE:  # fase 1: entender el proyecto y proponer ideas
+            ideation = ask_gemini(client, ideation_system(),
+                                  user_prompt(tree, context, rules, recent, [], EXTRA_CONTEXT),
+                                  Ideation, temperature=1.0)
+            ideas = ideation.ideas[:NUM_IDEAS]
+            text = describe_ideas(ideation.project_summary, ideas)
+            log(text)
+            summary(text)
+
+        # fase 2: implementar la mejor idea (si falla la validación, se prueba la siguiente)
+        proposal, errors, per_commit, nothing, chosen = None, [], [], "", None
+        for idea in (ideas[:MAX_IDEA_TRIES] or [None]):
+            if idea is not None:
+                log(f"Implementando idea: {idea.title}")
+            proposal, errors, per_commit, nothing = propose(client, sysmsg, tree, context, rules, recent, idea, feature)
+            if proposal is not None and not errors:
+                chosen = idea
+                break
+    except GeminiBusy as e:
+        log(f"::warning::Gemini no pudo responder ahora: {e}")
+        summary(f"Gemini no pudo responder ahora (saturación o límite). No se creó nada.\n\n{e}")
+        return 0
+
+    if proposal is None:
+        log(f"Gemini no propone cambios: {nothing}")
+        summary(f"Sin cambios: {nothing}")
+        return 0
     if errors:
         log("::warning::La propuesta de Gemini no pasó la validación; no se crea PR.")
         summary("La propuesta no pasó la validación:\n- " + "\n- ".join(errors))
         return 0
 
+    others = [i for i in ideas if i is not chosen]
+
     if DRY_RUN:
-        text = describe_dry_run(proposal)
+        text = describe_dry_run(proposal, others)
         log(text)
         summary(text)
         return 0
@@ -552,7 +695,7 @@ def main() -> int:
 
     sh(["git", "push", "-u", "origin", branch])
     pr = sh(["gh", "pr", "create", "--base", base, "--head", branch,
-             "--title", header(proposal.commits[0]), "--body", pr_body(proposal),
+             "--title", header(proposal.commits[0]), "--body", pr_body(proposal, others),
              "--label", LABEL])
     log(pr.stdout.strip())
     summary(f"PR creada: {pr.stdout.strip()}")

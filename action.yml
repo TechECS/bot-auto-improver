@@ -1,5 +1,5 @@
 name: "TechBAI: bot-auto-improver"
-description: Revisa el repositorio con Gemini y abre una PR pequeña con Conventional Commits. Nunca hace merge.
+description: Analiza el repositorio con Gemini, propone funcionalidades nuevas inspiradas en proyectos open source y abre una PR con Conventional Commits. Nunca hace merge.
 author: TechECS
 branding:
   icon: git-pull-request
@@ -28,14 +28,23 @@ inputs:
     description: Idioma de commits y PR (es, en...).
     default: es
   focus:
-    description: "auto (rota cada semana), bugs, tests, seguridad, docs, accesibilidad o funcionalidad."
+    description: "auto (= funcionalidad: siempre propone algo nuevo), rotar (cambia de foco cada semana), bugs, tests, seguridad, docs, accesibilidad o funcionalidad."
     default: auto
+  context:
+    description: "Contexto libre sobre el proyecto y lo que quieres (p. ej. 'herramienta interna de mi equipo; prioriza automatización e informes')."
+    default: ""
+  ideate:
+    description: "'true' para pedir primero 5 ideas (con proyectos open source de referencia) e implementar la mejor. Solo en modo funcionalidad."
+    default: "true"
+  allow-nothing:
+    description: "'true' permite que el bot responda 'no hay nada que hacer'. Por defecto 'false': siempre entrega algo."
+    default: "false"
   dry-run:
     description: "'true' para solo mostrar la propuesta en el resumen del job, sin crear rama ni PR."
     default: "false"
   max-files:
     description: Máximo de archivos distintos que puede tocar una PR.
-    default: "6"
+    default: "8"
   max-open-prs:
     description: Si ya hay tantas PRs del bot abiertas, no crea otra.
     default: "1"
@@ -109,6 +118,9 @@ runs:
         AI_PROBE: ${{ inputs.probe }}
         AI_LANGUAGE: ${{ inputs.language }}
         AI_FOCUS: ${{ inputs.focus }}
+        AI_CONTEXT: ${{ inputs.context }}
+        AI_IDEATE: ${{ inputs.ideate }}
+        AI_ALLOW_NOTHING: ${{ inputs.allow-nothing }}
         AI_DRY_RUN: ${{ inputs.dry-run }}
         AI_MAX_FILES: ${{ inputs.max-files }}
         AI_MAX_OPEN_PRS: ${{ inputs.max-open-prs }}
