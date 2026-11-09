@@ -83,7 +83,7 @@ Los errores `503 UNAVAILABLE` («high demand») son del lado de Google y suelen 
 
 ## Límites conocidos
 
-- Contexto limitado a unos 250 000 caracteres (con truncado por archivo): en repos grandes verá solo una parte.
+- Contexto limitado a unos 250 000 caracteres (con truncado por archivo): en repos grandes verá solo una parte, priorizando archivos con actividad reciente en Git (`git_context.py`).
 - Las ediciones se hacen por «buscar y reemplazar» exacto; si Gemini no copia el fragmento literalmente, la propuesta se descarta.
 - La capa gratuita de Gemini tiene límites de uso y puede cambiar. Cada ejecución hace 1-2 llamadas.
 
