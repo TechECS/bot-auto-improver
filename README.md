@@ -18,7 +18,7 @@ Si no hay nada que merezca la pena, **no crea PR**.
 *Organización → Settings → Developer settings → GitHub Apps → New GitHub App*
 
 - Webhook: desactivado.
-- Permisos de repositorio: **Contents** y **Pull requests** en *Read and write*.
+- Permisos de repositorio: **Contents**, **Pull requests** e **Issues** en *Read and write*. Issues hace falta para crear la etiqueta `auto-improver` (las etiquetas se gestionan con ese permiso).
 - *Where can this app be installed*: **Any account** si vas a usarla en repos de cuentas personales; *Only on this account* si solo la usarás en repos de la organización.
 - Anota el **Client ID**, genera una **clave privada** (`.pem`) e **instala la App** en los repos donde quieras el bot.
 
@@ -26,7 +26,7 @@ La App solo sirve para generar un token temporal de 1 hora. Con ella la PR la ab
 
 ### 2. Secretos
 
-En el repo (o como secretos de la organización, para compartirlos): `APP_CLIENT_ID` (puede ser una *variable*, no es secreto), `APP_PRIVATE_KEY` (contenido completo del `.pem`) y `GEMINI_API_KEY` ([Google AI Studio](https://aistudio.google.com/), capa gratuita).
+En el repo (o como secretos de la organización, para compartirlos): `APP_CLIENT_ID` (una *variable* del repo, no es secreto), `APP_PRIVATE_KEY` (contenido completo del `.pem`; guárdala como **secreto**, nunca como variable, porque las variables se ven en claro) y `GEMINI_API_KEY` ([Google AI Studio](https://aistudio.google.com/), capa gratuita).
 
 ### 3. Workflow
 
@@ -34,11 +34,22 @@ Copia [`ejemplo-workflow.yml`](ejemplo-workflow.yml) en `.github/workflows/auto-
 
 ### 4. Ajuste del repo
 
-*Settings → Actions → General → Workflow permissions*: activa «Allow GitHub Actions to create and approve pull requests» si usas el `GITHUB_TOKEN` en lugar de una App.
+Con una App no necesitas tocar nada. Solo si usas el `GITHUB_TOKEN` en lugar de una App, activa en *Settings → Actions → General → Workflow permissions* «Allow GitHub Actions to create and approve pull requests».
 
 ### 5. Primera prueba
 
 *Actions → Auto-improver → Run workflow*. Por defecto va en **dry run**: muestra la propuesta en el resumen del job sin crear nada. Cuando te convenza, ejecútalo sin dry run.
+
+## Self-test con la App
+
+El workflow [`self-test.yml`](.github/workflows/self-test.yml) prueba la action sobre este mismo repo (`uses: ./`) y funciona igual que el ejemplo:
+
+- Genera con `actions/create-github-app-token` un token temporal usando la variable `APP_CLIENT_ID` y el secreto `APP_PRIVATE_KEY`, con permisos de **Contents**, **Pull requests** e **Issues** (escritura).
+- Ese token se usa en el `checkout` y como `github-token`, y se pasa `app-slug` para que los commits salgan con la identidad de la App.
+- El workflow solo tiene `contents: read`: todo lo que escribe lo hace el token de la App. La App debe estar instalada en este repo.
+- El *dry run* está **desmarcado por defecto** (crea rama y PR); márcalo si solo quieres ver la propuesta.
+- Su `test-command` compila los tres scripts y ejecuta los tests unitarios (`python -m unittest discover`).
+- Además de `focus: auto`, puedes elegir `rotar` para que el foco cambie cada semana.
 
 ## Identidad en git y en la PR
 
@@ -75,6 +86,7 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 - Rechaza rutas absolutas o con `..`.
 - Los tests del proyecto se ejecutan antes de abrir la PR, **sin** el token ni la API key en el entorno, y el token no queda guardado en `.git/config`.
 - Con `GITHUB_TOKEN` en vez de una App, las PRs **no disparan el CI** (regla anti-bucles de GitHub).
+- El token de la App dura 1 hora y solo lleva los permisos que pide el workflow (`permission-*`).
 - El código del repo se envía a la API de Gemini. En la **capa gratuita de Google AI Studio, los datos pueden usarse para mejorar sus productos**: no lo uses con código privado o sensible sin revisar sus condiciones actuales.
 
 ## Si Gemini está saturado
