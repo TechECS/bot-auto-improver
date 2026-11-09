@@ -695,7 +695,20 @@ def main() -> int:
             sh(["git", "branch", "-D", branch])
             return 0
 
-    sh(["git", "push", "-u", "origin", branch])
+    try:
+        sh(["git", "push", "-u", "origin", branch])
+    except RuntimeError as e:
+        if "403" in str(e) or "denied" in str(e).lower():
+            msg = ("El token no puede hacer push a este repositorio (403). Revisa: "
+                   "1) que el token tenga Contents: Read and write y Pull requests: Read and write; "
+                   "2) que el secreto usado sea ese token (si lo regeneras, actualiza el secreto); "
+                   "3) si la organización exige aprobar los fine-grained tokens, que no estén pendientes "
+                   "(Org > Settings > Personal access tokens > Pending requests); "
+                   "4) que el usuario del token tenga rol Write o superior en el repo.")
+            log(f"::error::{msg}")
+            summary(f"No se pudo hacer push (403).\n\n{msg}")
+            return 1
+        raise
     pr = sh(["gh", "pr", "create", "--base", base, "--head", branch,
              "--title", header(proposal.commits[0]), "--body", pr_body(proposal, others),
              "--label", LABEL])
