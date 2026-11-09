@@ -24,10 +24,12 @@ from pathlib import Path
 from pydantic import BaseModel
 
 ROOT = Path.cwd()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite")
 MODELS = [m.strip() for m in MODEL.split(",") if m.strip()]  # cadena de fallback
 USED_MODEL = MODELS[0]
 AUTO_FALLBACK = os.environ.get("AI_AUTO_FALLBACK", "true").lower() == "true"
+PROBE = os.environ.get("AI_PROBE", "false").lower() == "true"
+PROBE_PAUSE = float(os.environ.get("AI_PROBE_PAUSE", "6"))
 TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "90000"))
 API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta")  # los alias *-latest solo existen en v1beta
 LANG = os.environ.get("AI_LANGUAGE", "es")
@@ -251,6 +253,32 @@ def list_models(client) -> list[str]:
     return sorted(names)
 
 
+def run_probe(client) -> int:
+    """Prueba cada modelo Flash con una petición mínima y publica una tabla de estado."""
+    from google.genai import types
+
+    names = list(dict.fromkeys(MODELS + flash_candidates(list_models(client), [])))
+    rows = []
+    for m in names:
+        t0 = time.time()
+        try:
+            client.models.generate_content(
+                model=m, contents="Responde solo con la palabra: ok",
+                config=types.GenerateContentConfig(max_output_tokens=64, temperature=0))
+            status = "✅ OK"
+        except Exception as e:  # noqa: BLE001
+            mm = re.search(r"\b([45]\d\d)\b\s+([A-Z_]+)", str(e))
+            status = f"❌ {mm.group(1)} {mm.group(2)}" if mm else f"❌ {e.__class__.__name__}"
+        rows.append(f"| `{m}` | {status} | {time.time() - t0:.1f}s |")
+        log(rows[-1])
+        time.sleep(PROBE_PAUSE)
+    text = ("### Sondeo de modelos\n\n| Modelo | Estado | Tiempo |\n|---|---|---|\n" + "\n".join(rows)
+            + "\n\n✅ responde con tu clave ahora · 429 límite de uso · 503/504 saturado · 404/403 no disponible para tu clave.")
+    log(text)
+    summary(text)
+    return 0
+
+
 class GeminiBusy(RuntimeError):
     """Ningún modelo pudo responder (saturación, límite de uso o modelos no disponibles)."""
 
@@ -258,6 +286,19 @@ class GeminiBusy(RuntimeError):
 SKIP_ERRORS = ("404", "NOT_FOUND", "403", "PERMISSION_DENIED")
 TRANSIENT_ERRORS = ("429", "500", "502", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE")
 NOT_TEXT_MODELS = ("image", "tts", "live", "audio", "embedding", "robotics", "computer", "customtools", "exp")
+
+
+FLASH_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-flash(-lite)?(-preview[\w-]*)?$")
+
+
+def flash_candidates(available: list[str], exclude: list[str]) -> list[str]:
+    """Modelos Flash de texto, ordenados: estables antes que preview, normales antes que lite, versión más alta primero."""
+    rows = []
+    for m in available:
+        mm = FLASH_RE.match(m)
+        if mm and m not in exclude and not any(x in m for x in NOT_TEXT_MODELS):
+            rows.append((bool(mm.group(3)), bool(mm.group(2)), -float(mm.group(1)), m))
+    return [r[3] for r in sorted(rows)]
 
 
 def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> str | None:
@@ -280,11 +321,11 @@ def try_model(client, model: str, system: str, prompt: str, lenient: bool) -> st
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             if any(t in msg for t in SKIP_ERRORS):
-                log(f"{model}: no disponible o sin permiso ({e.__class__.__name__}); pruebo el siguiente.")
+                log(f"{model}: no disponible o sin permiso ({e.__class__.__name__}: {msg[:200]!r}); pruebo el siguiente.")
                 return None
             if not any(t in msg for t in TRANSIENT_ERRORS):
                 if lenient:
-                    log(f"{model}: {e.__class__.__name__}; pruebo el siguiente.")
+                    log(f"{model}: {e.__class__.__name__}: {msg[:200]!r}; pruebo el siguiente.")
                     return None
                 raise
             kind = "límite de uso (429)" if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) else "servidor saturado (5xx)"
@@ -311,8 +352,7 @@ def ask_gemini(client, system: str, prompt: str) -> Proposal:
 
     available = list_models(client)
     if AUTO_FALLBACK:
-        extra = sorted((m for m in available if "flash" in m and m not in tried
-                        and not any(x in m for x in NOT_TEXT_MODELS)), reverse=True)[:3]
+        extra = flash_candidates(available, tried)[:4]
         if extra:
             log(f"Los modelos configurados fallaron; pruebo otros disponibles: {', '.join(extra)}")
         for model in extra:
@@ -432,6 +472,10 @@ def main() -> int:
     from google import genai
     from google.genai import types
 
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version=API_VERSION, timeout=TIMEOUT_MS))
+    if PROBE:
+        return run_probe(client)
+
     base = out(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     if not DRY_RUN:
         sh(["gh", "label", "create", LABEL, "--color", "5319e7", "--force",
@@ -450,7 +494,6 @@ def main() -> int:
     tree = "\n".join(files[:400])
     context = build_context(files)
     rules = read_text(".auto-improver.md") or ""
-    client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version=API_VERSION, timeout=TIMEOUT_MS))
 
     proposal, errors, per_commit = None, [], []
     for attempt in (1, 2):

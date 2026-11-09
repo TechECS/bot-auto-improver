@@ -14,7 +14,10 @@ inputs:
     required: true
   model:
     description: Modelo de Gemini o lista separada por comas en orden de preferencia; si uno da 404, 429 o 5xx, pasa al siguiente.
-    default: gemini-flash-latest,gemini-2.5-flash,gemini-2.5-flash-lite
+    default: gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite
+  probe:
+    description: "'true' para sondear cada modelo Flash con una petición mínima y publicar una tabla (OK, 429, 503, 404...). No crea nada."
+    default: "false"
   auto-fallback:
     description: "Si fallan todos los modelos de `model`, prueba hasta 3 modelos Flash más que tu clave tenga disponibles."
     default: "true"
@@ -103,6 +106,7 @@ runs:
         GEMINI_MODEL: ${{ inputs.model }}
         GEMINI_API_VERSION: ${{ inputs.api-version }}
         AI_AUTO_FALLBACK: ${{ inputs.auto-fallback }}
+        AI_PROBE: ${{ inputs.probe }}
         AI_LANGUAGE: ${{ inputs.language }}
         AI_FOCUS: ${{ inputs.focus }}
         AI_DRY_RUN: ${{ inputs.dry-run }}

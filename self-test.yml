@@ -1,0 +1,57 @@
+# Prueba manual de la action sobre este mismo repo (usa el código local con `uses: ./`).
+# Solo necesita el secreto GEMINI_API_KEY. Para PRs reales activa en
+# Settings → Actions → General: "Allow GitHub Actions to create and approve pull requests".
+
+name: Self-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: "Foco de la revisión"
+        type: choice
+        default: auto
+        options: [auto, bugs, tests, seguridad, docs, accesibilidad, funcionalidad]
+      model:
+        description: "Modelo o lista separada por comas (vacío = lista por defecto)"
+        type: string
+        default: ""
+      probe:
+        description: "Sondear qué modelos responden con tu clave (no crea nada)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Solo mostrar la propuesta (no crea rama ni PR)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: self-test
+  cancel-in-progress: false
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./
+        with:
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          focus: ${{ github.event.inputs.focus || 'auto' }}
+          dry-run: ${{ github.event.inputs.dry_run || 'true' }}
+          language: es
+          probe: ${{ github.event.inputs.probe || 'false' }}
+          model: ${{ github.event.inputs.model || 'gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite' }}
+          # El bot no se modifica a sí mismo mientras pruebas:
+          protected: "auto_improver.py,action.yml"
+          test-command: python -m py_compile auto_improver.py
