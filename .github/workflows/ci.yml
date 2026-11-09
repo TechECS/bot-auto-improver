@@ -18,15 +18,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Comprobar sintaxis del script
-        run: python -m py_compile auto_improver.py
+      - name: Comprobar sintaxis de los scripts
+        run: python -m py_compile auto_improver.py git_context.py project_detector.py
 
-      - name: Validar YAML (action y ejemplo)
+      - name: Tests unitarios
+        run: python -m unittest discover -v
+
+      - name: Validar YAML (action, ejemplo y workflows)
         run: |
           python -m pip install --quiet pyyaml
           python - <<'EOF'
+          import glob
           import yaml
-          for f in ("action.yml", "ejemplo-workflow.yml"):
-              yaml.safe_load(open(f, encoding="utf-8"))
+          files = ["action.yml", "ejemplo-workflow.yml"]
+          files += sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          for f in files:
+              with open(f, encoding="utf-8") as fh:
+                  yaml.safe_load(fh)
               print("OK", f)
           EOF

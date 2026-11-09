@@ -1,6 +1,7 @@
 # Prueba manual de la action sobre este mismo repo (usa el código local con `uses: ./`).
-# Solo necesita el secreto GEMINI_API_KEY. Para PRs reales activa en
-# Settings → Actions → General: "Allow GitHub Actions to create and approve pull requests".
+# Necesita: variable APP_CLIENT_ID, secretos APP_PRIVATE_KEY y GEMINI_API_KEY, y la GitHub App
+# instalada en este repo. La PR la abre "<app>[bot]" con un token temporal de la App, así que
+# no hace falta activar "Allow GitHub Actions to create and approve pull requests".
 
 name: Self-test
 
@@ -31,11 +32,10 @@ on:
       dry_run:
         description: "Solo mostrar la propuesta (no crea rama ni PR)"
         type: boolean
-        default: true
+        default: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read   # el trabajo real lo hace el token de la GitHub App
 
 concurrency:
   group: self-test
@@ -46,17 +46,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Token temporal (1 h) de la App, solo con los permisos necesarios.
+      # Issues: para crear la etiqueta `auto-improver`.
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
 
       - uses: ./
         with:
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          app-slug: ${{ steps.app-token.outputs.app-slug }}   # commits con la identidad real de la App
           focus: ${{ github.event.inputs.focus || 'auto' }}
-          dry-run: ${{ github.event.inputs.dry_run || 'true' }}
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
           language: es
           probe: ${{ github.event.inputs.probe || 'false' }}
           model: ${{ github.event.inputs.model }}
@@ -64,4 +77,4 @@ jobs:
           # Por defecto el bot SÍ puede proponer mejoras sobre sí mismo (solo PR, nunca merge).
           # Marca "protect_bot" si quieres que no toque su propio código.
           protected: ${{ github.event.inputs.protect_bot == 'true' && 'auto_improver.py,action.yml' || '' }}
-          test-command: python -m py_compile auto_improver.py
+          test-command: python -m py_compile auto_improver.py git_context.py project_detector.py && python -m unittest discover -v
