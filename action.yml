@@ -55,7 +55,7 @@ inputs:
     description: Comando de tests del proyecto. Si falla, se descarta la PR.
     default: ""
   install-command:
-    description: Comando para instalar las dependencias del proyecto antes de los tests.
+    description: Comando para instalar las dependencias del proyecto antes de los tests (se autodetecta si no se indica).
     default: ""
   python-version:
     description: Versión de Python para ejecutar el bot.
