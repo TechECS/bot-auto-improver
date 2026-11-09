@@ -36,7 +36,7 @@ jobs:
       - id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.APP_CLIENT_ID }}
+          client-id: ${{ vars.APP_CLIENT_ID || secrets.APP_CLIENT_ID }}   # vale como variable o como secreto
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
