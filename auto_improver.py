@@ -24,7 +24,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 ROOT = Path.cwd()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite")
+# Única fuente de la lista de modelos por defecto (action.yml y los workflows la dejan vacía).
+DEFAULT_MODELS = "gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+MODEL = os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_MODELS
 MODELS = [m.strip() for m in MODEL.split(",") if m.strip()]  # cadena de fallback
 USED_MODEL = MODELS[0]
 AUTO_FALLBACK = os.environ.get("AI_AUTO_FALLBACK", "true").lower() == "true"
