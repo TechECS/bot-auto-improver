@@ -1,5 +1,9 @@
 # 🤖 Bot Auto-Improver (TechBAI)
 
+<p align="center">
+  <img src="https://github.com/TechECS/bot-auto-improver/blob/3cc25f64736e8c53c1c70d41f91aeb688ee7f3db/.github/assets/tech-bai-logo.png" alt="TechDEV_BAI Logo" width="200"/>
+</p>
+
 GitHub Action que revisa un repositorio con **Gemini** (capa gratuita) y abre **una PR pequeña** con mejoras: bugs, tests, seguridad, docs, accesibilidad o funcionalidades. Los commits y la PR siguen **Conventional Commits**. Nunca hace merge: la decisión es siempre tuya.
 
 ## Cómo funciona
