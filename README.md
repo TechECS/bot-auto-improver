@@ -4,10 +4,10 @@ GitHub Action que revisa un repositorio con **Gemini** (capa gratuita) y abre **
 
 ## Cómo funciona
 
-1. Lee el repo (árbol, código, README y `.auto-improver.md`) y las PRs anteriores del bot.
+1. Lee el repo (árbol, código, README y `.auto-improver.md`), prioriza los archivos según su actividad reciente en Git y analiza las PRs anteriores del bot.
 2. Pide a Gemini **una** mejora pequeña, en JSON estructurado, con un foco que rota cada semana.
 3. Valida la propuesta: cabecera Conventional Commits, rutas permitidas, que cada `find` aparezca exactamente una vez y que JSON y Python compilen. Si falla, se lo devuelve a Gemini una vez; si vuelve a fallar, no hace nada.
-4. Aplica los cambios en una rama `tipo/slug-en-kebab-case`, ejecuta tus tests y, si pasan, abre la PR con la etiqueta `auto-improver`.
+4. Aplica los cambios en una rama `tipo/slug-en-kebab-case`, ejecuta los comandos de instalación y tests (se autodetectan si no se especifican) y, si pasan, abre la PR con la etiqueta `auto-improver` e incluye un indicador gráfico de riesgo (Bajo 🟢, Medio 🟡, Alto 🔴).
 
 Si no hay nada que merezca la pena, **no crea PR**.
 
@@ -63,7 +63,7 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 | `max-open-prs` | `1` | No crea otra PR si ya hay tantas abiertas |
 | `protected` | | Patrones extra de archivos intocables, separados por comas |
 | `test-command` | | Comando de tests (se autodetecta si no se indica); si falla, se descarta la PR |
-| `install-command` | | Dependencias del proyecto antes de los tests |
+| `install-command` | | Comando de instalación de dependencias (se autodetecta si no se indica) |
 | `python-version` | `3.11` | Versión de Python del bot |
 | `app-slug` | | Slug de la App: commits con su identidad real (tiene prioridad) |
 | `git-user-name` / `git-user-email` | `github-actions[bot]` | Autor de los commits si no hay `app-slug` |
