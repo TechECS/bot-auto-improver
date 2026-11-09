@@ -1,0 +1,61 @@
+# Copia este archivo en el repo que quieres mejorar: .github/workflows/auto-improver.yml
+# Necesitas: variable APP_CLIENT_ID, secretos APP_PRIVATE_KEY y GEMINI_API_KEY
+# (pueden ser de la organización para compartirlos entre repos).
+
+name: Auto-improver
+
+on:
+  schedule:
+    - cron: "43 5 * * 1"   # lunes 05:43 UTC
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: "Foco de la revisión"
+        type: choice
+        default: auto
+        options: [auto, bugs, tests, seguridad, docs, accesibilidad, funcionalidad]
+      dry_run:
+        description: "Solo mostrar la propuesta (no crea rama ni PR)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read   # el trabajo real lo hace el token de la GitHub App
+
+concurrency:
+  group: auto-improver
+  cancel-in-progress: false
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Token temporal (1 h) de la App, solo con los permisos necesarios.
+      # La PR la abre "<app>[bot]" y SÍ dispara el CI.
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - uses: TechECS/bot-auto-improver@v1
+        with:
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          app-slug: ${{ steps.app-token.outputs.app-slug }}   # commits con la identidad real de la App
+          focus: ${{ github.event.inputs.focus || 'auto' }}
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
+          language: es
+          # Ajusta a tu proyecto (opcionales):
+          # install-command: pip install -r requirements.txt
+          # test-command: python -m unittest discover -s tests -v
+          # protected: "docs/generated/*,CHANGELOG.md"

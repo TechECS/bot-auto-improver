@@ -1,0 +1,93 @@
+# 🤖 Bot Auto-Improver (TechBAI)
+
+GitHub Action que revisa un repositorio con **Gemini** (capa gratuita) y abre **una PR pequeña** con mejoras: bugs, tests, seguridad, docs, accesibilidad o funcionalidades. Los commits y la PR siguen **Conventional Commits**. Nunca hace merge: la decisión es siempre tuya.
+
+## Cómo funciona
+
+1. Lee el repo (árbol, código, README y `.auto-improver.md`) y las PRs anteriores del bot.
+2. Pide a Gemini **una** mejora pequeña, en JSON estructurado, con un foco que rota cada semana.
+3. Valida la propuesta: cabecera Conventional Commits, rutas permitidas, que cada `find` aparezca exactamente una vez y que JSON y Python compilen. Si falla, se lo devuelve a Gemini una vez; si vuelve a fallar, no hace nada.
+4. Aplica los cambios en una rama `tipo/slug-en-kebab-case`, ejecuta tus tests y, si pasan, abre la PR con la etiqueta `auto-improver`.
+
+Si no hay nada que merezca la pena, **no crea PR**.
+
+## Puesta en marcha
+
+### 1. GitHub App (una sola vez)
+
+*Organización → Settings → Developer settings → GitHub Apps → New GitHub App*
+
+- Webhook: desactivado.
+- Permisos de repositorio: **Contents** y **Pull requests** en *Read and write*.
+- *Where can this app be installed*: **Any account** si vas a usarla en repos de cuentas personales; *Only on this account* si solo la usarás en repos de la organización.
+- Anota el **Client ID**, genera una **clave privada** (`.pem`) e **instala la App** en los repos donde quieras el bot.
+
+La App solo sirve para generar un token temporal de 1 hora. Con ella la PR la abre `tu-app[bot]`, el CI del repo **sí se dispara** y tú **puedes aprobarla**.
+
+### 2. Secretos
+
+En el repo (o como secretos de la organización, para compartirlos): `APP_CLIENT_ID` (puede ser una *variable*, no es secreto), `APP_PRIVATE_KEY` (contenido completo del `.pem`) y `GEMINI_API_KEY` ([Google AI Studio](https://aistudio.google.com/), capa gratuita).
+
+### 3. Workflow
+
+Copia [`ejemplo-workflow.yml`](ejemplo-workflow.yml) en `.github/workflows/auto-improver.yml` del repo a mejorar (ya apunta a `TechECS/bot-auto-improver`). Opcionalmente copia [`ejemplo-reglas.md`](ejemplo-reglas.md) como `.auto-improver.md` con las reglas de tu proyecto.
+
+### 4. Ajuste del repo
+
+*Settings → Actions → General → Workflow permissions*: activa «Allow GitHub Actions to create and approve pull requests» si usas el `GITHUB_TOKEN` en lugar de una App.
+
+### 5. Primera prueba
+
+*Actions → Auto-improver → Run workflow*. Por defecto va en **dry run**: muestra la propuesta en el resumen del job sin crear nada. Cuando te convenza, ejecútalo sin dry run.
+
+## Identidad en git y en la PR
+
+Con `app-slug` (lo da `actions/create-github-app-token`), **commits y PR salen con la identidad real de la App**: autor `<slug>[bot]` y email `<id>+<slug>[bot]@users.noreply.github.com`, con su avatar enlazado. El nombre visible es el *slug* de la App (por ejemplo `techbai-bot-auto-improver[bot]`), no el nombre con espacios o dos puntos. Sin `app-slug` se usan `git-user-name` y `git-user-email`.
+
+Los commits hechos con `git` desde Actions no salen firmados («Verified»).
+
+## Entradas
+
+| Entrada | Por defecto | Descripción |
+|---|---|---|
+| `gemini-api-key` | (obligatoria) | API key de Gemini |
+| `github-token` | (obligatoria) | Token de la GitHub App (o PAT) |
+| `model` | `gemini-flash-latest` | Modelo de Gemini |
+| `language` | `es` | Idioma de commits y PR (`es`, `en`) |
+| `focus` | `auto` | `auto`, `bugs`, `tests`, `seguridad`, `docs`, `accesibilidad`, `funcionalidad` |
+| `dry-run` | `false` | Solo muestra la propuesta |
+| `max-files` | `6` | Máximo de archivos por PR |
+| `max-open-prs` | `1` | No crea otra PR si ya hay tantas abiertas |
+| `protected` | | Patrones extra de archivos intocables, separados por comas |
+| `test-command` | | Comando de tests; si falla, se descarta la PR |
+| `install-command` | | Dependencias del proyecto antes de los tests |
+| `python-version` | `3.11` | Versión de Python del bot |
+| `app-slug` | | Slug de la App: commits con su identidad real (tiene prioridad) |
+| `git-user-name` / `git-user-email` | `github-actions[bot]` | Autor de los commits si no hay `app-slug` |
+
+## Seguridad
+
+- **Nunca hace merge** y solo mantiene abierta una PR a la vez.
+- Archivos **intocables** por defecto: `.github/`, `data/`, `LICENSE*`, `CNAME`, `.env*`, claves, lockfiles y `.auto-improver.md`.
+- Rechaza rutas absolutas o con `..`.
+- Los tests del proyecto se ejecutan antes de abrir la PR, **sin** el token ni la API key en el entorno, y el token no queda guardado en `.git/config`.
+- Con `GITHUB_TOKEN` en vez de una App, las PRs **no disparan el CI** (regla anti-bucles de GitHub).
+- El código del repo se envía a la API de Gemini. En la **capa gratuita de Google AI Studio, los datos pueden usarse para mejorar sus productos**: no lo uses con código privado o sensible sin revisar sus condiciones actuales.
+
+## Límites conocidos
+
+- Contexto limitado a unos 250 000 caracteres (con truncado por archivo): en repos grandes verá solo una parte.
+- Las ediciones se hacen por «buscar y reemplazar» exacto; si Gemini no copia el fragmento literalmente, la propuesta se descarta.
+- La capa gratuita de Gemini tiene límites de uso y puede cambiar. Cada ejecución hace 1-2 llamadas.
+
+## Publicar versiones
+
+Crea un release `v1.0.0` y mantén una etiqueta móvil `v1` que apunte a la última 1.x: así los repos usan `TechECS/bot-auto-improver@v1`. Mientras pruebas, usa `@main`. Si el repo de la Action es privado, los repos de la organización solo podrán usarla si lo permites en *Settings → Actions → General → Access*; para repos de cuentas personales debe ser **público**.
+
+## Contribuir
+
+Commits con [Conventional Commits](https://www.conventionalcommits.org/es/). Cambios pequeños y centrados en una sola cosa.
+
+## Licencia
+
+Añade aquí el archivo `LICENSE` que prefieras (en tus otros proyectos usas AGPL-3.0).

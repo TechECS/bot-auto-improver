@@ -1,0 +1,104 @@
+name: "TechBAI: bot-auto-improver"
+description: Revisa el repositorio con Gemini y abre una PR pequeña con Conventional Commits. Nunca hace merge.
+author: TechECS
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  gemini-api-key:
+    description: API key de Gemini (Google AI Studio, capa gratuita).
+    required: true
+  github-token:
+    description: Token con permisos de contenido y PRs (se recomienda el token de una GitHub App).
+    required: true
+  model:
+    description: Modelo de Gemini. Cámbialo si Google renombra el modelo gratuito.
+    default: gemini-flash-latest
+  language:
+    description: Idioma de commits y PR (es, en...).
+    default: es
+  focus:
+    description: "auto (rota cada semana), bugs, tests, seguridad, docs, accesibilidad o funcionalidad."
+    default: auto
+  dry-run:
+    description: "'true' para solo mostrar la propuesta en el resumen del job, sin crear rama ni PR."
+    default: "false"
+  max-files:
+    description: Máximo de archivos distintos que puede tocar una PR.
+    default: "6"
+  max-open-prs:
+    description: Si ya hay tantas PRs del bot abiertas, no crea otra.
+    default: "1"
+  protected:
+    description: Patrones extra de archivos que el bot no puede editar, separados por comas.
+    default: ""
+  test-command:
+    description: Comando de tests del proyecto. Si falla, se descarta la PR.
+    default: ""
+  install-command:
+    description: Comando para instalar las dependencias del proyecto antes de los tests.
+    default: ""
+  python-version:
+    description: Versión de Python para ejecutar el bot.
+    default: "3.11"
+  app-slug:
+    description: "Slug de la GitHub App (output app-slug de create-github-app-token). Si se indica, los commits salen con la identidad real de la App: <slug>[bot] y su email noreply."
+    default: ""
+  git-user-name:
+    description: Nombre del autor de los commits (se ignora si se indica app-slug).
+    default: github-actions[bot]
+  git-user-email:
+    description: Email del autor de los commits (se ignora si se indica app-slug).
+    default: 41898282+github-actions[bot]@users.noreply.github.com
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar dependencias del bot
+      shell: bash
+      run: python -m pip install --quiet google-genai pydantic
+
+    - name: Instalar dependencias del proyecto
+      if: inputs.install-command != ''
+      shell: bash
+      env:
+        INSTALL_COMMAND: ${{ inputs.install-command }}
+      run: bash -c "$INSTALL_COMMAND"
+
+    - name: Configurar git
+      shell: bash
+      env:
+        GIT_NAME: ${{ inputs.git-user-name }}
+        GIT_EMAIL: ${{ inputs.git-user-email }}
+        APP_SLUG: ${{ inputs.app-slug }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ -n "$APP_SLUG" ]; then
+          BOT_ID=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          GIT_NAME="${APP_SLUG}[bot]"
+          GIT_EMAIL="${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+        fi
+        git config user.name "$GIT_NAME"
+        git config user.email "$GIT_EMAIL"
+        # El push usa el token vía gh, sin dejarlo guardado en .git/config
+        gh auth setup-git
+
+    - name: Ejecutar auto-improver
+      shell: bash
+      run: python "${{ github.action_path }}/auto_improver.py"
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GEMINI_MODEL: ${{ inputs.model }}
+        AI_LANGUAGE: ${{ inputs.language }}
+        AI_FOCUS: ${{ inputs.focus }}
+        AI_DRY_RUN: ${{ inputs.dry-run }}
+        AI_MAX_FILES: ${{ inputs.max-files }}
+        AI_MAX_OPEN_PRS: ${{ inputs.max-open-prs }}
+        AI_PROTECTED: ${{ inputs.protected }}
+        AI_TEST_COMMAND: ${{ inputs.test-command }}
