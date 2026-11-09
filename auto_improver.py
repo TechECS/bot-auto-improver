@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 ROOT = Path.cwd()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1beta")  # los alias *-latest solo existen en v1beta
 LANG = os.environ.get("AI_LANGUAGE", "es")
 MAX_CHARS = int(os.environ.get("AI_MAX_CONTEXT_CHARS", "250000"))
 MAX_FILE_CHARS = int(os.environ.get("AI_MAX_FILE_CHARS", "80000"))
@@ -234,6 +235,18 @@ def user_prompt(tree: str, context: str, rules: str, recent: list[dict], errors:
     return msg
 
 
+def list_models(client) -> list[str]:
+    """Modelos con generateContent disponibles para la clave (para diagnosticar un 404)."""
+    names: list[str] = []
+    try:
+        for m in client.models.list():
+            if "generateContent" in (getattr(m, "supported_actions", None) or []):
+                names.append(str(m.name).replace("models/", ""))
+    except Exception as e:  # noqa: BLE001
+        log(f"No se pudo listar los modelos: {e}")
+    return sorted(names)
+
+
 def ask_gemini(client, system: str, prompt: str) -> Proposal:
     from google.genai import types
 
@@ -251,6 +264,12 @@ def ask_gemini(client, system: str, prompt: str) -> Proposal:
             )
             return Proposal.model_validate_json(resp.text)
         except Exception as e:  # noqa: BLE001
+            if "404" in str(e) or "NOT_FOUND" in str(e):
+                available = list_models(client)
+                log(f"::error::El modelo '{MODEL}' no está disponible con la API {API_VERSION}. "
+                    "Pon uno válido en la entrada `model`. Modelos con generateContent para tu clave:\n- "
+                    + "\n- ".join(available[:40] or ["(no se pudo obtener la lista)"]))
+                raise
             transient = any(t in str(e) for t in ("429", "500", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE"))
             if i == 3 or not transient:
                 raise
@@ -364,6 +383,7 @@ def main() -> int:
         log("::error::Falta el secreto GEMINI_API_KEY")
         return 1
     from google import genai
+    from google.genai import types
 
     base = out(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     if not DRY_RUN:
@@ -383,7 +403,7 @@ def main() -> int:
     tree = "\n".join(files[:400])
     context = build_context(files)
     rules = read_text(".auto-improver.md") or ""
-    client = genai.Client(api_key=key)
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(api_version=API_VERSION))
 
     proposal, errors, per_commit = None, [], []
     for attempt in (1, 2):

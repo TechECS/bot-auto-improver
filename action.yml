@@ -15,6 +15,9 @@ inputs:
   model:
     description: Modelo de Gemini. Cámbialo si Google renombra el modelo gratuito.
     default: gemini-flash-latest
+  api-version:
+    description: Versión de la API de Gemini. Los alias *-latest solo existen en v1beta.
+    default: v1beta
   language:
     description: Idioma de commits y PR (es, en...).
     default: es
@@ -95,6 +98,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         GH_TOKEN: ${{ inputs.github-token }}
         GEMINI_MODEL: ${{ inputs.model }}
+        GEMINI_API_VERSION: ${{ inputs.api-version }}
         AI_LANGUAGE: ${{ inputs.language }}
         AI_FOCUS: ${{ inputs.focus }}
         AI_DRY_RUN: ${{ inputs.dry-run }}

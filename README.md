@@ -52,7 +52,8 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 |---|---|---|
 | `gemini-api-key` | (obligatoria) | API key de Gemini |
 | `github-token` | (obligatoria) | Token de la GitHub App (o PAT) |
-| `model` | `gemini-flash-latest` | Modelo de Gemini |
+| `model` | `gemini-flash-latest` | Modelo de Gemini. Si falla con 404, el log lista los modelos válidos para tu clave |
+| `api-version` | `v1beta` | Versión de la API de Gemini (los alias `*-latest` solo existen en `v1beta`) |
 | `language` | `es` | Idioma de commits y PR (`es`, `en`) |
 | `focus` | `auto` | `auto`, `bugs`, `tests`, `seguridad`, `docs`, `accesibilidad`, `funcionalidad` |
 | `dry-run` | `false` | Solo muestra la propuesta |
