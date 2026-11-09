@@ -10,6 +10,35 @@ import json
 from pathlib import Path
 
 
+def detect_install_command(repo_root: Path | None = None) -> str | None:
+    """Infiere el comando de instalación de dependencias analizando el repositorio."""
+    root = repo_root or Path.cwd()
+
+    if (root / "package-lock.json").is_file():
+        return "npm ci"
+    if (root / "yarn.lock").is_file():
+        return "yarn install --frozen-lockfile"
+    if (root / "pnpm-lock.yaml").is_file():
+        return "pnpm install --frozen-lockfile"
+    if (root / "package.json").is_file():
+        return "npm install"
+
+    if (root / "requirements.txt").is_file():
+        return "pip install -r requirements.txt"
+    if (root / "Pipfile").is_file():
+        return "pipenv install"
+    if (root / "poetry.lock").is_file():
+        return "poetry install"
+
+    if (root / "Cargo.toml").is_file():
+        return "cargo build"
+
+    if (root / "go.mod").is_file():
+        return "go mod download"
+
+    return None
+
+
 def detect_test_command(repo_root: Path | None = None) -> str | None:
     """Infiere el comando de tests analizando la estructura del repositorio."""
     root = repo_root or Path.cwd()

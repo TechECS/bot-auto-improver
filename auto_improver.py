@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from project_detector import detect_test_command
+from project_detector import detect_install_command, detect_test_command
 
 ROOT = Path.cwd()
 # Única fuente de la lista de modelos por defecto (action.yml y los workflows la dejan vacía).
@@ -42,6 +42,7 @@ MAX_FILE_CHARS = int(os.environ.get("AI_MAX_FILE_CHARS", "80000"))
 MAX_FILES = int(os.environ.get("AI_MAX_FILES", "8"))
 MAX_OPEN_PRS = int(os.environ.get("AI_MAX_OPEN_PRS", "1"))
 MAX_COMMITS = 3
+INSTALL_CMD = os.environ.get("AI_INSTALL_COMMAND", "").strip()
 TEST_CMD = os.environ.get("AI_TEST_COMMAND", "").strip()
 FOCUS = os.environ.get("AI_FOCUS", "auto")  # auto = funcionalidad; "rotar" = rota cada semana
 ALLOW_NOTHING = os.environ.get("AI_ALLOW_NOTHING", "false").lower() == "true"  # permitir «nada que hacer»
@@ -700,6 +701,18 @@ def main() -> int:
         if c.body.strip():
             msg += ["-m", c.body.strip()]
         sh(msg)
+
+    install_cmd = INSTALL_CMD or detect_install_command(ROOT)
+    if install_cmd:
+        log(f"Ejecutando instalación ({'configurada' if INSTALL_CMD else 'autodetectada'}): {install_cmd}")
+        safe_env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GEMINI_API_KEY")}
+        r = subprocess.run(install_cmd, shell=True, cwd=ROOT, env=safe_env)
+        if r.returncode != 0:
+            log("::warning::La instalación de dependencias falló; se descarta la PR.")
+            summary("La instalación de dependencias falló; no se creó la PR.")
+            sh(["git", "checkout", "-f", base])
+            sh(["git", "branch", "-D", branch])
+            return 0
 
     test_cmd = TEST_CMD or detect_test_command(ROOT)
     if test_cmd:
