@@ -23,6 +23,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from project_detector import detect_test_command
+
 ROOT = Path.cwd()
 # Única fuente de la lista de modelos por defecto (action.yml y los workflows la dejan vacía).
 DEFAULT_MODELS = "gemini-flash-latest,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"
@@ -699,10 +701,11 @@ def main() -> int:
             msg += ["-m", c.body.strip()]
         sh(msg)
 
-    if TEST_CMD:
-        log(f"Ejecutando tests: {TEST_CMD}")
+    test_cmd = TEST_CMD or detect_test_command(ROOT)
+    if test_cmd:
+        log(f"Ejecutando tests ({'configurado' if TEST_CMD else 'autodetectado'}): {test_cmd}")
         safe_env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GEMINI_API_KEY")}
-        r = subprocess.run(TEST_CMD, shell=True, cwd=ROOT, env=safe_env)
+        r = subprocess.run(test_cmd, shell=True, cwd=ROOT, env=safe_env)
         if r.returncode != 0:
             log("::warning::Los tests fallan con los cambios propuestos; se descarta la PR.")
             summary("Los tests fallaron con los cambios propuestos; no se creó la PR.")

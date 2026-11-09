@@ -62,7 +62,7 @@ Los commits hechos con `git` desde Actions no salen firmados («Verified»).
 | `max-files` | `6` | Máximo de archivos por PR |
 | `max-open-prs` | `1` | No crea otra PR si ya hay tantas abiertas |
 | `protected` | | Patrones extra de archivos intocables, separados por comas |
-| `test-command` | | Comando de tests; si falla, se descarta la PR |
+| `test-command` | | Comando de tests (se autodetecta si no se indica); si falla, se descarta la PR |
 | `install-command` | | Dependencias del proyecto antes de los tests |
 | `python-version` | `3.11` | Versión de Python del bot |
 | `app-slug` | | Slug de la App: commits con su identidad real (tiene prioridad) |
